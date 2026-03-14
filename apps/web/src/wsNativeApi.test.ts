@@ -323,7 +323,9 @@ describe("wsNativeApi", () => {
   it("forwards AgentWatch requests to the websocket methods", async () => {
     requestMock
       .mockResolvedValueOnce({ jobs: [] })
-      .mockResolvedValueOnce({ jobId: "job-1", output: "" });
+      .mockResolvedValueOnce({ jobId: "job-1", output: "" })
+      .mockResolvedValueOnce({ dismissed: true })
+      .mockResolvedValueOnce({ stopped: true });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -332,6 +334,8 @@ describe("wsNativeApi", () => {
       includeHealthy: true,
     });
     await api.agentWatch.tail({ jobId: "job-1", lines: 40 });
+    await api.agentWatch.dismiss({ jobId: "job-1" });
+    await api.agentWatch.stop({ jobId: "job-1" });
 
     expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.agentWatchPoll, {
       threadId: "thread-1",
@@ -340,6 +344,12 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.agentWatchTail, {
       jobId: "job-1",
       lines: 40,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.agentWatchDismiss, {
+      jobId: "job-1",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(4, WS_METHODS.agentWatchStop, {
+      jobId: "job-1",
     });
   });
 
@@ -361,6 +371,7 @@ describe("wsNativeApi", () => {
         pid: 123,
         status: "running",
         startedAt: "2026-03-14T15:00:00.000Z",
+        reviewState: "none",
         shouldInspect: false,
         conditions: [],
       },

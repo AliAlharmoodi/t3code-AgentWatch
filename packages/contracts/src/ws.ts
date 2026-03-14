@@ -1,5 +1,11 @@
 import { Schema, Struct } from "effect";
-import { AgentWatchJobSnapshot, AgentWatchPollInput, AgentWatchTailInput } from "./agentWatch";
+import {
+  AgentWatchDismissInput,
+  AgentWatchJobSnapshot,
+  AgentWatchPollInput,
+  AgentWatchStopInput,
+  AgentWatchTailInput,
+} from "./agentWatch";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
@@ -80,6 +86,8 @@ export const WS_METHODS = {
   // AgentWatch
   agentWatchPoll: "agentwatch.poll",
   agentWatchTail: "agentwatch.tail",
+  agentWatchDismiss: "agentwatch.dismiss",
+  agentWatchStop: "agentwatch.stop",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -155,6 +163,8 @@ const WebSocketRequestBody = Schema.Union([
   // AgentWatch
   tagRequestBody(WS_METHODS.agentWatchPoll, AgentWatchPollInput),
   tagRequestBody(WS_METHODS.agentWatchTail, AgentWatchTailInput),
+  tagRequestBody(WS_METHODS.agentWatchDismiss, AgentWatchDismissInput),
+  tagRequestBody(WS_METHODS.agentWatchStop, AgentWatchStopInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

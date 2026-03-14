@@ -21,6 +21,8 @@ interface AgentWatchJob {
   finishedAt: number | undefined;
   exitCode: number | undefined;
   lastOutputAt: number | undefined;
+  reviewState: "none" | "in_review";
+  dismissed: boolean;
 }
 
 export interface AgentWatchEvents {
@@ -65,7 +67,9 @@ function parseExitCodeFromLog(logPath: string): number | undefined {
 function tailLog(logPath: string, lines: number): string {
   try {
     const content = readFileSync(logPath, "utf8");
-    const parsedLines = content.split(/\r?\n/g);
+    const parsedLines = content
+      .split(/\r?\n/g)
+      .filter((line) => !line.startsWith(EXIT_MARKER_PREFIX));
     return parsedLines.slice(-Math.max(1, lines)).join("\n").trim();
   } catch {
     return "";
@@ -175,6 +179,8 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
       finishedAt: undefined,
       exitCode: undefined,
       lastOutputAt: undefined,
+      reviewState: "none",
+      dismissed: false,
     };
 
     this.jobs.set(jobId, job);
@@ -196,6 +202,7 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
         pid: -1,
         status: "exited",
         startedAt: nowIso(Date.now()),
+        reviewState: "none",
         shouldInspect: true,
         conditions: [{ code: "missing_job", message: `No AgentWatch job found for id ${jobId}.` }],
       };
@@ -220,6 +227,7 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
     }
 
     const snapshots = Array.from(this.jobs.values())
+      .filter((job) => !job.dismissed)
       .filter((job) => (input.threadId ? job.threadId === input.threadId : true))
       .map((job) => this.toSnapshot(job, now));
     return {
@@ -237,6 +245,51 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
       jobId,
       output: tailLog(job.logPath, lines),
     };
+  }
+
+  markInReview(jobId: string): AgentWatchJobSnapshot | null {
+    const job = this.jobs.get(jobId);
+    if (!job || job.dismissed) {
+      return null;
+    }
+    if (job.reviewState === "in_review") {
+      return this.toSnapshot(job, Date.now());
+    }
+    job.reviewState = "in_review";
+    const snapshot = this.toSnapshot(job, Date.now());
+    this.emit("updated", snapshot);
+    return snapshot;
+  }
+
+  dismiss(jobId: string): { dismissed: boolean } {
+    const job = this.jobs.get(jobId);
+    if (!job || job.dismissed) {
+      return { dismissed: false };
+    }
+    job.dismissed = true;
+    const snapshot = this.toSnapshot(job, Date.now());
+    this.emit("updated", snapshot);
+    return { dismissed: true };
+  }
+
+  stop(jobId: string): { stopped: boolean } {
+    const job = this.jobs.get(jobId);
+    if (!job || job.dismissed || job.finishedAt !== undefined || job.pid <= 0) {
+      return { stopped: false };
+    }
+
+    try {
+      if (process.platform === "win32") {
+        process.kill(job.pid, "SIGTERM");
+      } else {
+        process.kill(-job.pid, "SIGTERM");
+      }
+    } catch {
+      return { stopped: false };
+    }
+
+    this.tick();
+    return { stopped: true };
   }
 
   private tick(): void {
@@ -311,7 +364,8 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
       ...(job.finishedAt !== undefined ? { finishedAt: nowIso(job.finishedAt) } : {}),
       ...(job.lastOutputAt !== undefined ? { lastOutputAt: nowIso(job.lastOutputAt) } : {}),
       ...(outputFreshnessMs !== undefined ? { outputFreshnessMs } : {}),
-      shouldInspect: conditions.length > 0,
+      reviewState: job.reviewState,
+      shouldInspect: job.reviewState === "none" && conditions.length > 0,
       conditions,
     };
   }
@@ -350,6 +404,20 @@ export class AgentWatch extends EventEmitter<AgentWatchEvents> {
         throw new Error("agentwatch.tail requires jobId.");
       }
       return this.tail(args.jobId, typeof args?.lines === "number" ? args.lines : 50);
+    }
+
+    if (toolName === "agentwatch.dismiss" || toolName === "agentwatch_dismiss") {
+      if (typeof args?.jobId !== "string") {
+        throw new Error("agentwatch.dismiss requires jobId.");
+      }
+      return this.dismiss(args.jobId);
+    }
+
+    if (toolName === "agentwatch.stop" || toolName === "agentwatch_stop") {
+      if (typeof args?.jobId !== "string") {
+        throw new Error("agentwatch.stop requires jobId.");
+      }
+      return this.stop(args.jobId);
     }
 
     throw new Error(`Unsupported tool: ${toolName}`);

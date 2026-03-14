@@ -18,6 +18,9 @@ export type AgentWatchCondition = typeof AgentWatchCondition.Type;
 export const AgentWatchJobStatus = Schema.Literals(["running", "exited"]);
 export type AgentWatchJobStatus = typeof AgentWatchJobStatus.Type;
 
+export const AgentWatchReviewState = Schema.Literals(["none", "in_review"]);
+export type AgentWatchReviewState = typeof AgentWatchReviewState.Type;
+
 export const AgentWatchJobSnapshot = Schema.Struct({
   jobId: TrimmedNonEmptyString,
   threadId: Schema.optional(ThreadId),
@@ -31,6 +34,7 @@ export const AgentWatchJobSnapshot = Schema.Struct({
   finishedAt: Schema.optional(TrimmedNonEmptyString),
   lastOutputAt: Schema.optional(TrimmedNonEmptyString),
   outputFreshnessMs: Schema.optional(NonNegativeInt),
+  reviewState: AgentWatchReviewState,
   shouldInspect: Schema.Boolean,
   conditions: Schema.Array(AgentWatchCondition),
 });
@@ -59,3 +63,23 @@ export const AgentWatchTailResult = Schema.Struct({
   output: Schema.String,
 });
 export type AgentWatchTailResult = typeof AgentWatchTailResult.Type;
+
+export const AgentWatchDismissInput = Schema.Struct({
+  jobId: TrimmedNonEmptyString,
+});
+export type AgentWatchDismissInput = typeof AgentWatchDismissInput.Type;
+
+export const AgentWatchDismissResult = Schema.Struct({
+  dismissed: Schema.Boolean,
+});
+export type AgentWatchDismissResult = typeof AgentWatchDismissResult.Type;
+
+export const AgentWatchStopInput = Schema.Struct({
+  jobId: TrimmedNonEmptyString,
+});
+export type AgentWatchStopInput = typeof AgentWatchStopInput.Type;
+
+export const AgentWatchStopResult = Schema.Struct({
+  stopped: Schema.Boolean,
+});
+export type AgentWatchStopResult = typeof AgentWatchStopResult.Type;

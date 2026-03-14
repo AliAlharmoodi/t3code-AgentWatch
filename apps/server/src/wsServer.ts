@@ -914,6 +914,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return agentWatch.tail(body.jobId, body.lines);
       }
 
+      case WS_METHODS.agentWatchDismiss: {
+        const body = stripRequestTag(request.body);
+        return agentWatch.dismiss(body.jobId);
+      }
+
+      case WS_METHODS.agentWatchStop: {
+        const body = stripRequestTag(request.body);
+        return agentWatch.stop(body.jobId);
+      }
+
       default: {
         const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({

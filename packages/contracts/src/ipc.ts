@@ -1,6 +1,10 @@
 import type {
+  AgentWatchDismissInput,
+  AgentWatchDismissResult,
   AgentWatchPollInput,
   AgentWatchPollResult,
+  AgentWatchStopInput,
+  AgentWatchStopResult,
   AgentWatchTailInput,
   AgentWatchTailResult,
 } from "./agentWatch";
@@ -169,6 +173,8 @@ export interface NativeApi {
   agentWatch: {
     poll: (input: AgentWatchPollInput) => Promise<AgentWatchPollResult>;
     tail: (input: AgentWatchTailInput) => Promise<AgentWatchTailResult>;
+    dismiss: (input: AgentWatchDismissInput) => Promise<AgentWatchDismissResult>;
+    stop: (input: AgentWatchStopInput) => Promise<AgentWatchStopResult>;
     onUpdate: (callback: (payload: import("./ws").AgentWatchUpdatedPayload) => void) => () => void;
   };
   orchestration: {

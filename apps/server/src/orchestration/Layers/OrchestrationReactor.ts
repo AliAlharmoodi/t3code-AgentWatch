@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect";
 
+import { AgentWatchReactor } from "../Services/AgentWatchReactor.ts";
 import {
   OrchestrationReactor,
   type OrchestrationReactorShape,
@@ -12,11 +13,13 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
   const providerCommandReactor = yield* ProviderCommandReactor;
   const checkpointReactor = yield* CheckpointReactor;
+  const agentWatchReactor = yield* AgentWatchReactor;
 
   const start: OrchestrationReactorShape["start"] = Effect.gen(function* () {
     yield* providerRuntimeIngestion.start;
     yield* providerCommandReactor.start;
     yield* checkpointReactor.start;
+    yield* agentWatchReactor.start;
   });
 
   return {

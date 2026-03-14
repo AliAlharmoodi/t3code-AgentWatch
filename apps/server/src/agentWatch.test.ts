@@ -64,6 +64,44 @@ describe("AgentWatch", () => {
     }
   });
 
+  it("marks inspected failures as in review", async () => {
+    const watch = new AgentWatch(20);
+
+    try {
+      const started = watch.start({
+        command: "sleep 0.05; exit 9",
+        staleAfterMs: 10_000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 220));
+
+      const reviewed = watch.markInReview(started.jobId);
+      expect(reviewed?.reviewState).toBe("in_review");
+      expect(reviewed?.shouldInspect).toBe(false);
+      expect(reviewed?.conditions.some((condition) => condition.code === "non_zero_exit")).toBe(
+        true,
+      );
+    } finally {
+      watch.dispose();
+    }
+  });
+
+  it("dismisses jobs from poll results", async () => {
+    const watch = new AgentWatch(20);
+
+    try {
+      const started = watch.start({
+        command: "sleep 0.2; echo done",
+        staleAfterMs: 10_000,
+      });
+
+      expect(watch.dismiss(started.jobId)).toEqual({ dismissed: true });
+      expect(watch.poll({ includeHealthy: true }).jobs).toHaveLength(0);
+    } finally {
+      watch.dispose();
+    }
+  });
+
   it("filters jobs by thread id", async () => {
     const watch = new AgentWatch(20);
 

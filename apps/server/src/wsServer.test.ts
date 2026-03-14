@@ -1830,6 +1830,7 @@ describe("WebSocket Server", () => {
         expect.objectContaining({
           jobId: started.jobId,
           threadId: "thread-agentwatch",
+          reviewState: "none",
         }),
       ]),
     });
@@ -1843,6 +1844,56 @@ describe("WebSocket Server", () => {
       jobId: started.jobId,
       output: expect.stringContaining("hello from watch"),
     });
+  });
+
+  it("dismisses AgentWatch jobs over websocket", async () => {
+    const watch = getSharedAgentWatch();
+    const started = watch.start({
+      threadId: ThreadId.makeUnsafe("thread-agentwatch-dismiss"),
+      command: "printf 'hello from watch\\n'",
+      staleAfterMs: 10_000,
+    });
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const dismissResponse = await sendRequest(ws, WS_METHODS.agentWatchDismiss, {
+      jobId: started.jobId,
+    });
+    expect(dismissResponse.error).toBeUndefined();
+    expect(dismissResponse.result).toEqual({ dismissed: true });
+
+    const pollResponse = await sendRequest(ws, WS_METHODS.agentWatchPoll, {
+      threadId: ThreadId.makeUnsafe("thread-agentwatch-dismiss"),
+      includeHealthy: true,
+    });
+    expect(pollResponse.result).toEqual({ jobs: [] });
+  });
+
+  it("stops running AgentWatch jobs over websocket", async () => {
+    const watch = getSharedAgentWatch();
+    const started = watch.start({
+      threadId: ThreadId.makeUnsafe("thread-agentwatch-stop"),
+      command: "sleep 5",
+      staleAfterMs: 10_000,
+    });
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const stopResponse = await sendRequest(ws, WS_METHODS.agentWatchStop, {
+      jobId: started.jobId,
+    });
+    expect(stopResponse.error).toBeUndefined();
+    expect(stopResponse.result).toEqual({ stopped: true });
   });
 
   it("pushes AgentWatch job updates over websocket", async () => {
@@ -1873,6 +1924,7 @@ describe("WebSocket Server", () => {
         jobId: started.jobId,
         label: "push-check",
         threadId: "thread-agentwatch-push",
+        reviewState: "none",
       }),
     });
   });

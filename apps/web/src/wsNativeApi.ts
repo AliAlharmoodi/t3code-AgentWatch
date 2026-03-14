@@ -164,6 +164,8 @@ export function createWsNativeApi(): NativeApi {
     agentWatch: {
       poll: (input) => transport.request(WS_METHODS.agentWatchPoll, input),
       tail: (input) => transport.request(WS_METHODS.agentWatchTail, input),
+      dismiss: (input) => transport.request(WS_METHODS.agentWatchDismiss, input),
+      stop: (input) => transport.request(WS_METHODS.agentWatchStop, input),
       onUpdate: (callback) =>
         transport.subscribe(WS_CHANNELS.agentWatchUpdated, (message) => callback(message.data)),
     },
