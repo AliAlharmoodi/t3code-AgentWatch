@@ -19,7 +19,7 @@ export function agentWatchJobsQueryOptions(threadId: ThreadId | null) {
       return api.agentWatch.poll({ threadId, includeHealthy: true });
     },
     enabled: Boolean(threadId),
-    refetchInterval: 3_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -34,6 +34,6 @@ export function agentWatchTailQueryOptions(jobId: string | null, lines = 80) {
       return api.agentWatch.tail({ jobId, lines });
     },
     enabled: Boolean(jobId),
-    refetchInterval: 3_000,
+    refetchInterval: 10_000,
   });
 }

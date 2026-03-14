@@ -43,6 +43,27 @@ describe("AgentWatch", () => {
     }
   });
 
+  it("records a clean exit code when the command explicitly exits", async () => {
+    const watch = new AgentWatch(20);
+
+    try {
+      const started = watch.start({
+        command: "printf 'agentwatch ok\\n'; sleep 0.05; exit 0",
+        staleAfterMs: 10_000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 220));
+
+      const status = watch.status(started.jobId);
+      expect(status.status).toBe("exited");
+      expect(status.exitCode).toBe(0);
+      expect(status.shouldInspect).toBe(false);
+      expect(status.conditions).toHaveLength(0);
+    } finally {
+      watch.dispose();
+    }
+  });
+
   it("filters jobs by thread id", async () => {
     const watch = new AgentWatch(20);
 

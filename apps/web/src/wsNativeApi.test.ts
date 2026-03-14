@@ -343,6 +343,39 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards AgentWatch update pushes to subscribers", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const onUpdate = vi.fn();
+    api.agentWatch.onUpdate(onUpdate);
+
+    emitPush(WS_CHANNELS.agentWatchUpdated, {
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      job: {
+        jobId: "job-1",
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        label: "ui-check",
+        command: "printf 'agentwatch ok\\n'",
+        cwd: "/tmp/project",
+        pid: 123,
+        status: "running",
+        startedAt: "2026-03-14T15:00:00.000Z",
+        shouldInspect: false,
+        conditions: [],
+      },
+    });
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      job: expect.objectContaining({
+        jobId: "job-1",
+        label: "ui-check",
+      }),
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

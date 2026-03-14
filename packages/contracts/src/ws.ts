@@ -1,5 +1,5 @@
 import { Schema, Struct } from "effect";
-import { AgentWatchPollInput, AgentWatchTailInput } from "./agentWatch";
+import { AgentWatchJobSnapshot, AgentWatchPollInput, AgentWatchTailInput } from "./agentWatch";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
@@ -88,7 +88,14 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  agentWatchUpdated: "agentwatch.updated",
 } as const;
+
+export const AgentWatchUpdatedPayload = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  job: AgentWatchJobSnapshot,
+});
+export type AgentWatchUpdatedPayload = typeof AgentWatchUpdatedPayload.Type;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
 
@@ -182,6 +189,7 @@ export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
+  readonly [WS_CHANNELS.agentWatchUpdated]: AgentWatchUpdatedPayload;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
 }
 
@@ -205,6 +213,10 @@ export const WsPushServerConfigUpdated = makeWsPushSchema(
   ServerConfigUpdatedPayload,
 );
 export const WsPushTerminalEvent = makeWsPushSchema(WS_CHANNELS.terminalEvent, TerminalEvent);
+export const WsPushAgentWatchUpdated = makeWsPushSchema(
+  WS_CHANNELS.agentWatchUpdated,
+  AgentWatchUpdatedPayload,
+);
 export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   OrchestrationEvent,
@@ -214,6 +226,7 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
   WS_CHANNELS.terminalEvent,
+  WS_CHANNELS.agentWatchUpdated,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
 export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
@@ -222,6 +235,7 @@ export const WsPush = Schema.Union([
   WsPushServerWelcome,
   WsPushServerConfigUpdated,
   WsPushTerminalEvent,
+  WsPushAgentWatchUpdated,
   WsPushOrchestrationDomainEvent,
 ]);
 export type WsPush = typeof WsPush.Type;

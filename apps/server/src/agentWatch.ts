@@ -3,8 +3,10 @@ import type { AgentWatchCondition, AgentWatchJobSnapshot } from "@t3tools/contra
 import { closeSync, mkdtempSync, openSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { resolveShellCandidates } from "./shellCandidates";
 
 interface AgentWatchJob {
   jobId: string;
@@ -19,6 +21,10 @@ interface AgentWatchJob {
   finishedAt: number | undefined;
   exitCode: number | undefined;
   lastOutputAt: number | undefined;
+}
+
+export interface AgentWatchEvents {
+  updated: [job: AgentWatchJobSnapshot];
 }
 
 const DEFAULT_STALE_AFTER_MS = 90_000;
@@ -80,12 +86,49 @@ export interface AgentWatchPollInput {
   includeHealthy?: boolean;
 }
 
-export class AgentWatch {
+function shellArgsForCommand(command: string): string[] {
+  if (process.platform === "win32") {
+    return ["/d", "/s", "/c", command];
+  }
+  return ["-c", command];
+}
+
+function spawnWithResolvedShell(
+  command: string,
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    stdio: [stdin: "ignore", stdout: number, stderr: number];
+    detached: boolean;
+  },
+): ChildProcess {
+  let lastError: unknown;
+  for (const candidate of resolveShellCandidates()) {
+    try {
+      return spawn(candidate.shell, shellArgsForCommand(command), {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: options.stdio,
+        detached: options.detached,
+        shell: false,
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to resolve a shell for AgentWatch.");
+}
+
+export class AgentWatch extends EventEmitter<AgentWatchEvents> {
   private readonly jobs = new Map<string, AgentWatchJob>();
   private readonly runtimeDir: string;
   private readonly interval: ReturnType<typeof setInterval>;
 
   constructor(watchdogIntervalMs = DEFAULT_WATCHDOG_INTERVAL_MS) {
+    super();
     this.runtimeDir = mkdtempSync(path.join(tmpdir(), "agentwatch-"));
     this.interval = setInterval(() => {
       this.tick();
@@ -108,9 +151,9 @@ export class AgentWatch {
     const logPath = path.join(this.runtimeDir, `${jobId}.log`);
     const logFd = openSync(logPath, "a");
 
-    const wrappedCommand = `${command}; __agentwatch_exit=$?; echo "${EXIT_MARKER_PREFIX}$__agentwatch_exit"`;
+    const wrappedCommand = `( ${command} ); __agentwatch_exit=$?; echo "${EXIT_MARKER_PREFIX}$__agentwatch_exit"; exit $__agentwatch_exit`;
 
-    const child = spawn("bash", ["-lc", wrappedCommand], {
+    const child = spawnWithResolvedShell(wrappedCommand, {
       cwd,
       detached: true,
       stdio: ["ignore", logFd, logFd],
@@ -136,7 +179,9 @@ export class AgentWatch {
 
     this.jobs.set(jobId, job);
     this.tick();
-    return this.toSnapshot(job, Date.now());
+    const snapshot = this.toSnapshot(job, Date.now());
+    this.emit("updated", snapshot);
+    return snapshot;
   }
 
   status(jobId: string): AgentWatchJobSnapshot {
@@ -197,6 +242,7 @@ export class AgentWatch {
   private tick(): void {
     const now = Date.now();
     for (const job of this.jobs.values()) {
+      const previousSnapshot = this.toSnapshot(job, now);
       try {
         const stats = statSync(job.logPath);
         job.lastOutputAt = stats.mtimeMs;
@@ -211,6 +257,11 @@ export class AgentWatch {
       if (!isProcessAlive(job.pid)) {
         job.finishedAt = now;
         job.exitCode = parseExitCodeFromLog(job.logPath);
+      }
+
+      const nextSnapshot = this.toSnapshot(job, now);
+      if (JSON.stringify(previousSnapshot) !== JSON.stringify(nextSnapshot)) {
+        this.emit("updated", nextSnapshot);
       }
     }
   }

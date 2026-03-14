@@ -169,6 +169,7 @@ export interface NativeApi {
   agentWatch: {
     poll: (input: AgentWatchPollInput) => Promise<AgentWatchPollResult>;
     tail: (input: AgentWatchTailInput) => Promise<AgentWatchTailResult>;
+    onUpdate: (callback: (payload: import("./ws").AgentWatchUpdatedPayload) => void) => () => void;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

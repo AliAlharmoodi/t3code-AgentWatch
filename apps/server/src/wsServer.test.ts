@@ -1845,6 +1845,38 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("pushes AgentWatch job updates over websocket", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const watch = getSharedAgentWatch();
+    const started = watch.start({
+      threadId: ThreadId.makeUnsafe("thread-agentwatch-push"),
+      command: "printf 'push update\\n'",
+      label: "push-check",
+      staleAfterMs: 10_000,
+    });
+
+    const push = await waitForPush(
+      ws,
+      WS_CHANNELS.agentWatchUpdated,
+      (message) => message.data.job.jobId === started.jobId,
+    );
+
+    expect(push.data).toEqual({
+      threadId: "thread-agentwatch-push",
+      job: expect.objectContaining({
+        jobId: started.jobId,
+        label: "push-check",
+        threadId: "thread-agentwatch-push",
+      }),
+    });
+  });
+
   it("rejects websocket connections without a valid auth token", async () => {
     server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
     const addr = server.address();

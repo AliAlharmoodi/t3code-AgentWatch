@@ -11,6 +11,7 @@ import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
 import {
+  type AgentWatchJobSnapshot,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
@@ -696,6 +697,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
   yield* readiness.markTerminalSubscriptionsReady;
+
+  const handleAgentWatchUpdated = (job: AgentWatchJobSnapshot) =>
+    void runPromise(
+      pushBus.publishAll(WS_CHANNELS.agentWatchUpdated, {
+        ...(job.threadId ? { threadId: job.threadId } : {}),
+        job,
+      }),
+    );
+  agentWatch.on("updated", handleAgentWatchUpdated);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      agentWatch.off("updated", handleAgentWatchUpdated);
+    }),
+  );
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
