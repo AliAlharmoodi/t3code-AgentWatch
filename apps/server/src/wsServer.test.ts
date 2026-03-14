@@ -53,6 +53,7 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { getSharedAgentWatch } from "./agentWatchInstance";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -1799,6 +1800,48 @@ describe("WebSocket Server", () => {
     expect(runStackedAction).toHaveBeenCalledWith({
       cwd: "/test",
       action: "commit_push",
+    });
+  });
+
+  it("returns AgentWatch jobs and tail output over websocket", async () => {
+    const watch = getSharedAgentWatch();
+    const started = watch.start({
+      threadId: ThreadId.makeUnsafe("thread-agentwatch"),
+      command: "printf 'hello from watch\\n'",
+      staleAfterMs: 10_000,
+    });
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const pollResponse = await sendRequest(ws, WS_METHODS.agentWatchPoll, {
+      threadId: ThreadId.makeUnsafe("thread-agentwatch"),
+      includeHealthy: true,
+    });
+    expect(pollResponse.error).toBeUndefined();
+    expect(pollResponse.result).toEqual({
+      jobs: expect.arrayContaining([
+        expect.objectContaining({
+          jobId: started.jobId,
+          threadId: "thread-agentwatch",
+        }),
+      ]),
+    });
+
+    const tailResponse = await sendRequest(ws, WS_METHODS.agentWatchTail, {
+      jobId: started.jobId,
+      lines: 20,
+    });
+    expect(tailResponse.error).toBeUndefined();
+    expect(tailResponse.result).toEqual({
+      jobId: started.jobId,
+      output: expect.stringContaining("hello from watch"),
     });
   });
 

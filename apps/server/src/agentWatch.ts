@@ -1,38 +1,14 @@
+import type { ThreadId } from "@t3tools/contracts";
+import type { AgentWatchCondition, AgentWatchJobSnapshot } from "@t3tools/contracts";
 import { closeSync, mkdtempSync, openSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-export type AgentWatchConditionCode =
-  | "stale_output"
-  | "non_zero_exit"
-  | "abnormal_exit"
-  | "missing_job";
-
-export interface AgentWatchCondition {
-  code: AgentWatchConditionCode;
-  message: string;
-}
-
-export interface AgentWatchJobSnapshot {
-  jobId: string;
-  label: string;
-  command: string;
-  cwd: string;
-  pid: number;
-  status: "running" | "exited";
-  exitCode?: number;
-  startedAt: string;
-  finishedAt?: string;
-  lastOutputAt?: string;
-  outputFreshnessMs?: number;
-  shouldInspect: boolean;
-  conditions: AgentWatchCondition[];
-}
-
 interface AgentWatchJob {
   jobId: string;
+  threadId?: ThreadId;
   label: string;
   command: string;
   cwd: string;
@@ -40,9 +16,9 @@ interface AgentWatchJob {
   logPath: string;
   staleAfterMs: number;
   startedAt: number;
-  finishedAt?: number;
-  exitCode?: number;
-  lastOutputAt?: number;
+  finishedAt: number | undefined;
+  exitCode: number | undefined;
+  lastOutputAt: number | undefined;
 }
 
 const DEFAULT_STALE_AFTER_MS = 90_000;
@@ -70,6 +46,9 @@ function parseExitCodeFromLog(logPath: string): number | undefined {
       return undefined;
     }
     const latest = match[match.length - 1];
+    if (!latest) {
+      return undefined;
+    }
     const parsed = Number.parseInt(latest.slice(EXIT_MARKER_PREFIX.length), 10);
     return Number.isInteger(parsed) ? parsed : undefined;
   } catch {
@@ -89,6 +68,7 @@ function tailLog(logPath: string, lines: number): string {
 
 export interface AgentWatchStartInput {
   command: string;
+  threadId?: ThreadId;
   cwd?: string;
   label?: string;
   staleAfterMs?: number;
@@ -96,6 +76,7 @@ export interface AgentWatchStartInput {
 
 export interface AgentWatchPollInput {
   jobId?: string;
+  threadId?: ThreadId;
   includeHealthy?: boolean;
 }
 
@@ -140,6 +121,7 @@ export class AgentWatch {
 
     const job: AgentWatchJob = {
       jobId,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
       label: input.label?.trim() || `job-${jobId.slice(0, 8)}`,
       command,
       cwd,
@@ -147,6 +129,9 @@ export class AgentWatch {
       logPath,
       staleAfterMs: input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
       startedAt: Date.now(),
+      finishedAt: undefined,
+      exitCode: undefined,
+      lastOutputAt: undefined,
     };
 
     this.jobs.set(jobId, job);
@@ -180,13 +165,18 @@ export class AgentWatch {
 
     if (input.jobId) {
       const snapshot = this.status(input.jobId);
+      if (input.threadId && snapshot.threadId !== input.threadId) {
+        return { jobs: [] };
+      }
       if (!input.includeHealthy && !snapshot.shouldInspect) {
         return { jobs: [] };
       }
       return { jobs: [snapshot] };
     }
 
-    const snapshots = Array.from(this.jobs.values()).map((job) => this.toSnapshot(job, now));
+    const snapshots = Array.from(this.jobs.values())
+      .filter((job) => (input.threadId ? job.threadId === input.threadId : true))
+      .map((job) => this.toSnapshot(job, now));
     return {
       jobs: input.includeHealthy ? snapshots : snapshots.filter((job) => job.shouldInspect),
     };
@@ -232,7 +222,11 @@ export class AgentWatch {
 
     const conditions: AgentWatchCondition[] = [];
 
-    if (status === "running" && outputFreshnessMs !== undefined && outputFreshnessMs > job.staleAfterMs) {
+    if (
+      status === "running" &&
+      outputFreshnessMs !== undefined &&
+      outputFreshnessMs > job.staleAfterMs
+    ) {
       conditions.push({
         code: "stale_output",
         message: `No terminal output for ${outputFreshnessMs}ms (threshold ${job.staleAfterMs}ms).`,
@@ -255,6 +249,7 @@ export class AgentWatch {
 
     return {
       jobId: job.jobId,
+      ...(job.threadId ? { threadId: job.threadId } : {}),
       label: job.label,
       command: job.command,
       cwd: job.cwd,
@@ -271,10 +266,11 @@ export class AgentWatch {
   }
 
   handleToolCall(toolName: string, args: Record<string, unknown> | undefined): unknown {
-    if (toolName === "agentwatch.start") {
+    if (toolName === "agentwatch.start" || toolName === "agentwatch_start") {
       return {
         job: this.start({
           command: typeof args?.command === "string" ? args.command : "",
+          ...(typeof args?.threadId === "string" ? { threadId: args.threadId as ThreadId } : {}),
           ...(typeof args?.cwd === "string" ? { cwd: args.cwd } : {}),
           ...(typeof args?.label === "string" ? { label: args.label } : {}),
           ...(typeof args?.staleAfterMs === "number" ? { staleAfterMs: args.staleAfterMs } : {}),
@@ -282,21 +278,23 @@ export class AgentWatch {
       };
     }
 
-    if (toolName === "agentwatch.status") {
+    if (toolName === "agentwatch.status" || toolName === "agentwatch_status") {
       if (typeof args?.jobId !== "string") {
         throw new Error("agentwatch.status requires jobId.");
       }
       return { job: this.status(args.jobId) };
     }
 
-    if (toolName === "agentwatch.poll") {
+    if (toolName === "agentwatch.poll" || toolName === "agentwatch_poll") {
       return this.poll({
         ...(typeof args?.jobId === "string" ? { jobId: args.jobId } : {}),
-        ...(typeof args?.includeHealthy === "boolean" ? { includeHealthy: args.includeHealthy } : {}),
+        ...(typeof args?.includeHealthy === "boolean"
+          ? { includeHealthy: args.includeHealthy }
+          : {}),
       });
     }
 
-    if (toolName === "agentwatch.tail") {
+    if (toolName === "agentwatch.tail" || toolName === "agentwatch_tail") {
       if (typeof args?.jobId !== "string") {
         throw new Error("agentwatch.tail requires jobId.");
       }

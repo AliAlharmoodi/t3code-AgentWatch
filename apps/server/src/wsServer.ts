@@ -78,6 +78,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { getSharedAgentWatch } from "./agentWatchInstance.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -255,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
+  const agentWatch = getSharedAgentWatch();
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -881,6 +883,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.agentWatchPoll: {
+        const body = stripRequestTag(request.body);
+        return agentWatch.poll({
+          ...(body.jobId ? { jobId: body.jobId } : {}),
+          ...(body.threadId ? { threadId: body.threadId } : {}),
+          ...(body.includeHealthy !== undefined ? { includeHealthy: body.includeHealthy } : {}),
+        });
+      }
+
+      case WS_METHODS.agentWatchTail: {
+        const body = stripRequestTag(request.body);
+        return agentWatch.tail(body.jobId, body.lines);
       }
 
       default: {

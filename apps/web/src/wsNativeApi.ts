@@ -161,6 +161,10 @@ export function createWsNativeApi(): NativeApi {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
+    agentWatch: {
+      poll: (input) => transport.request(WS_METHODS.agentWatchPoll, input),
+      tail: (input) => transport.request(WS_METHODS.agentWatchTail, input),
+    },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>

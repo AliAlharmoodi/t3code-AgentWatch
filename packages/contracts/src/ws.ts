@@ -1,4 +1,5 @@
 import { Schema, Struct } from "effect";
+import { AgentWatchPollInput, AgentWatchTailInput } from "./agentWatch";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
@@ -75,6 +76,10 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // AgentWatch
+  agentWatchPoll: "agentwatch.poll",
+  agentWatchTail: "agentwatch.tail",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -139,6 +144,10 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+
+  // AgentWatch
+  tagRequestBody(WS_METHODS.agentWatchPoll, AgentWatchPollInput),
+  tagRequestBody(WS_METHODS.agentWatchTail, AgentWatchTailInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

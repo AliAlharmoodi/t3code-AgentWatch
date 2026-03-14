@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { AgentWatch } from "./agentWatch";
@@ -37,6 +38,33 @@ describe("AgentWatch", () => {
 
       const poll = watch.poll();
       expect(poll.jobs).toHaveLength(0);
+    } finally {
+      watch.dispose();
+    }
+  });
+
+  it("filters jobs by thread id", async () => {
+    const watch = new AgentWatch(20);
+
+    try {
+      const threadA = ThreadId.makeUnsafe("thread-a");
+      const threadB = ThreadId.makeUnsafe("thread-b");
+      watch.start({
+        threadId: threadA,
+        command: "sleep 0.2; echo alpha",
+        staleAfterMs: 10_000,
+      });
+      watch.start({
+        threadId: threadB,
+        command: "sleep 0.2; echo bravo",
+        staleAfterMs: 10_000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const poll = watch.poll({ threadId: threadA, includeHealthy: true });
+      expect(poll.jobs).toHaveLength(1);
+      expect(poll.jobs[0]?.threadId).toBe(threadA);
     } finally {
       watch.dispose();
     }

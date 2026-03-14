@@ -6,7 +6,10 @@ import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildAgentWatchDynamicTools,
   buildCodexInitializeParams,
+  buildCodexThreadResumeParams,
+  buildCodexThreadStartParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
@@ -369,6 +372,51 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("registers AgentWatch as dynamic tools on thread/start", () => {
+    const params = buildCodexThreadStartParams({
+      model: "gpt-5.3-codex",
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+    });
+
+    expect(params).toEqual({
+      model: "gpt-5.3-codex",
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      experimentalRawEvents: false,
+      dynamicTools: buildAgentWatchDynamicTools(),
+    });
+    expect(params.dynamicTools.map((tool) => tool.name)).toEqual([
+      "agentwatch_start",
+      "agentwatch_status",
+      "agentwatch_poll",
+      "agentwatch_tail",
+    ]);
+  });
+
+  it("registers AgentWatch as dynamic tools on thread/resume", () => {
+    expect(
+      buildCodexThreadResumeParams(
+        {
+          model: "gpt-5.3-codex",
+          cwd: "/repo",
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        },
+        "provider-thread-1",
+      ),
+    ).toEqual({
+      model: "gpt-5.3-codex",
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      threadId: "provider-thread-1",
+      dynamicTools: buildAgentWatchDynamicTools(),
+    });
+  });
 });
 
 describe("sendTurn", () => {
@@ -503,6 +551,13 @@ describe("sendTurn", () => {
         },
       },
     });
+  });
+
+  it("includes AgentWatch guidance in default collaboration instructions", () => {
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("## AgentWatch");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("agentwatch_start");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("agentwatch_poll");
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain("agentwatch_tail");
   });
 
   it("keeps the session model when interaction mode is set without an explicit model", async () => {
@@ -748,8 +803,6 @@ describe("respondToUserInput", () => {
   });
 });
 
-
-
 describe("handleServerRequest tool calls", () => {
   it("routes item/tool/call to AgentWatch and writes a JSON-RPC result", () => {
     const manager = new CodexAppServerManager();
@@ -782,7 +835,7 @@ describe("handleServerRequest tool calls", () => {
 
     (
       manager as unknown as {
-        handleServerRequest: (context: typeof context, request: Record<string, unknown>) => void;
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
       }
     ).handleServerRequest(context, {
       jsonrpc: "2.0",
@@ -794,10 +847,133 @@ describe("handleServerRequest tool calls", () => {
       },
     });
 
-    expect(handleToolCall).toHaveBeenCalledWith("agentwatch.poll", { includeHealthy: false });
+    expect(handleToolCall).toHaveBeenCalledWith("agentwatch.poll", {
+      includeHealthy: false,
+      threadId: "thread_1",
+    });
     expect(writeMessage).toHaveBeenCalledWith(context, {
       id: 3,
-      result: { jobs: [] },
+      result: {
+        success: true,
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({ jobs: [] }),
+          },
+        ],
+      },
+    });
+  });
+
+  it("accepts the Codex schema tool field for item/tool/call", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+
+    const handleToolCall = vi
+      .spyOn(
+        (manager as unknown as { agentWatch: { handleToolCall: (...args: unknown[]) => unknown } })
+          .agentWatch,
+        "handleToolCall",
+      )
+      .mockReturnValue({ jobId: "job-1", output: "ok" });
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "item/tool/call",
+      params: {
+        tool: "agentwatch.tail",
+        arguments: { jobId: "job-1" },
+      },
+    });
+
+    expect(handleToolCall).toHaveBeenCalledWith("agentwatch.tail", {
+      jobId: "job-1",
+      threadId: "thread_1",
+    });
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 4,
+      result: {
+        success: true,
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({ jobId: "job-1", output: "ok" }),
+          },
+        ],
+      },
+    });
+  });
+
+  it("passes thread context through agentwatch.start tool calls", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+
+    vi.spyOn(
+      manager as unknown as { writeMessage: (...args: unknown[]) => void },
+      "writeMessage",
+    ).mockImplementation(() => {});
+
+    const handleToolCall = vi
+      .spyOn(
+        (manager as unknown as { agentWatch: { handleToolCall: (...args: unknown[]) => unknown } })
+          .agentWatch,
+        "handleToolCall",
+      )
+      .mockReturnValue({ job: { jobId: "job-1", status: "running" } });
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "item/tool/call",
+      params: {
+        tool: "agentwatch_start",
+        arguments: { command: "sleep 1", label: "ui-check" },
+      },
+    });
+
+    expect(handleToolCall).toHaveBeenCalledWith("agentwatch_start", {
+      command: "sleep 1",
+      label: "ui-check",
+      threadId: "thread_1",
     });
   });
 });

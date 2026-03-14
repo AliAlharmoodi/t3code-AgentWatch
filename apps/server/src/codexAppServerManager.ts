@@ -27,7 +27,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
-import { AgentWatch } from "./agentWatch";
+import { getSharedAgentWatch } from "./agentWatchInstance";
 
 type PendingRequestKey = string;
 
@@ -339,6 +339,23 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+## AgentWatch
+
+AgentWatch is a built-in monitoring tool for background or long-running commands. Prefer it over ad hoc detached shell processes when the user wants to run something and keep an eye on it from the app.
+
+Use these tools directly:
+- \`agentwatch_start\`: Start a monitored background job. Provide at least \`command\`; optionally include \`label\`, \`cwd\`, or \`staleAfterMs\`.
+- \`agentwatch_status\`: Fetch one job by \`jobId\`.
+- \`agentwatch_poll\`: Check current jobs and identify jobs that need inspection.
+- \`agentwatch_tail\`: Read recent output for a job by \`jobId\`.
+
+Prefer AgentWatch when:
+- a command may run for a while
+- the user wants progress or later inspection
+- you would otherwise reach for \`&\`, \`nohup\`, \`disown\`, or another detached shell pattern
+
+When using AgentWatch, start the job with \`agentwatch_start\`, then use \`agentwatch_poll\` and \`agentwatch_tail\` to inspect it instead of spawning another detached process outside the monitored flow.
 </collaboration_mode>`;
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
@@ -415,6 +432,97 @@ export function buildCodexInitializeParams() {
   } as const;
 }
 
+interface CodexDynamicToolSpec {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+interface CodexThreadOpenSessionOverrides {
+  model: string | null;
+  serviceTier?: string;
+  cwd: string | null;
+  approvalPolicy: "on-request" | "never";
+  sandbox: "workspace-write" | "danger-full-access";
+}
+
+export function buildAgentWatchDynamicTools(): CodexDynamicToolSpec[] {
+  return [
+    {
+      name: "agentwatch_start",
+      description:
+        "Start a monitored background command that can be inspected later from the app UI.",
+      inputSchema: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: { type: "string", minLength: 1 },
+          cwd: { type: "string" },
+          label: { type: "string" },
+          staleAfterMs: { type: "number", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "agentwatch_status",
+      description: "Get the latest status for one monitored job.",
+      inputSchema: {
+        type: "object",
+        required: ["jobId"],
+        properties: {
+          jobId: { type: "string", minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "agentwatch_poll",
+      description: "List monitored jobs, optionally including healthy jobs.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          jobId: { type: "string", minLength: 1 },
+          includeHealthy: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "agentwatch_tail",
+      description: "Read recent output from a monitored job.",
+      inputSchema: {
+        type: "object",
+        required: ["jobId"],
+        properties: {
+          jobId: { type: "string", minLength: 1 },
+          lines: { type: "number", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+export function buildCodexThreadStartParams(sessionOverrides: CodexThreadOpenSessionOverrides) {
+  return {
+    ...sessionOverrides,
+    experimentalRawEvents: false,
+    dynamicTools: buildAgentWatchDynamicTools(),
+  };
+}
+
+export function buildCodexThreadResumeParams(
+  sessionOverrides: CodexThreadOpenSessionOverrides,
+  threadId: string,
+) {
+  return {
+    ...sessionOverrides,
+    threadId,
+    dynamicTools: buildAgentWatchDynamicTools(),
+  };
+}
+
 function buildCodexCollaborationMode(input: {
   readonly interactionMode?: "default" | "plan";
   readonly model?: string;
@@ -478,6 +586,21 @@ function toCodexUserInputAnswers(
   );
 }
 
+function toDynamicToolCallResult(result: unknown): {
+  success: boolean;
+  contentItems: Array<{ type: "inputText"; text: string }>;
+} {
+  return {
+    success: true,
+    contentItems: [
+      {
+        type: "inputText",
+        text: JSON.stringify(result),
+      },
+    ],
+  };
+}
+
 export function classifyCodexStderrLine(rawLine: string): { message: string } | null {
   const line = rawLine.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
   if (!line) {
@@ -515,6 +638,7 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly agentWatch = getSharedAgentWatch();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
@@ -614,10 +738,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 
-      const threadStartParams = {
-        ...sessionOverrides,
-        experimentalRawEvents: false,
-      };
+      const threadStartParams = buildCodexThreadStartParams(sessionOverrides);
       const resumeThreadId = readResumeThreadId(input);
       this.emitLifecycleEvent(
         context,
@@ -639,10 +760,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       if (resumeThreadId) {
         try {
           threadOpenMethod = "thread/resume";
-          threadOpenResponse = await this.sendRequest(context, "thread/resume", {
-            ...sessionOverrides,
-            threadId: resumeThreadId,
-          });
+          threadOpenResponse = await this.sendRequest(
+            context,
+            "thread/resume",
+            buildCodexThreadResumeParams(sessionOverrides, resumeThreadId),
+          );
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
             this.emitErrorEvent(
@@ -1016,7 +1138,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     for (const threadId of this.sessions.keys()) {
       this.stopSession(threadId);
     }
-    this.agentWatch.dispose();
   }
 
   private requireSession(threadId: ThreadId): CodexSessionContext {
@@ -1219,7 +1340,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     if (request.method === "item/tool/call") {
-      const toolName = this.readString(request.params, "toolName") ?? this.readString(request.params, "name");
+      const toolName =
+        this.readString(request.params, "toolName") ??
+        this.readString(request.params, "tool") ??
+        this.readString(request.params, "name");
       const rawArgs =
         this.readObject(request.params, "arguments") ??
         this.readObject(request.params, "input") ??
@@ -1238,10 +1362,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
 
       try {
-        const result = this.agentWatch.handleToolCall(toolName, rawArgs);
+        const argsWithThreadContext =
+          rawArgs && typeof rawArgs === "object"
+            ? { ...rawArgs, threadId: context.session.threadId }
+            : { threadId: context.session.threadId };
+        const result = this.agentWatch.handleToolCall(toolName, argsWithThreadContext);
         this.writeMessage(context, {
           id: request.id,
-          result,
+          result: toDynamicToolCallResult(result),
         });
       } catch (error) {
         this.writeMessage(context, {

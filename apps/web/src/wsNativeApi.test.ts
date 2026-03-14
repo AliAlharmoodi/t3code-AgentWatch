@@ -320,6 +320,29 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards AgentWatch requests to the websocket methods", async () => {
+    requestMock
+      .mockResolvedValueOnce({ jobs: [] })
+      .mockResolvedValueOnce({ jobId: "job-1", output: "" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.agentWatch.poll({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      includeHealthy: true,
+    });
+    await api.agentWatch.tail({ jobId: "job-1", lines: 40 });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.agentWatchPoll, {
+      threadId: "thread-1",
+      includeHealthy: true,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.agentWatchTail, {
+      jobId: "job-1",
+      lines: 40,
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

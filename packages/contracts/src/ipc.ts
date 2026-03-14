@@ -1,4 +1,11 @@
 import type {
+  AgentWatchPollInput,
+  AgentWatchPollResult,
+  AgentWatchTailInput,
+  AgentWatchTailResult,
+} from "./agentWatch";
+import { EditorId } from "./editor";
+import type {
   GitCheckoutInput,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
@@ -45,7 +52,6 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
-import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -159,6 +165,10 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  agentWatch: {
+    poll: (input: AgentWatchPollInput) => Promise<AgentWatchPollResult>;
+    tail: (input: AgentWatchTailInput) => Promise<AgentWatchTailResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
